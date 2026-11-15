@@ -15,6 +15,10 @@ concurrency:
   group: quickweb-debug-release
   cancel-in-progress: true
 
+env:
+  ANDROID_HOME: /usr/local/lib/android/sdk
+  ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
+
 jobs:
   build:
     name: Build and publish debug APK
@@ -30,15 +34,10 @@ jobs:
           test -s "$ZIP"
           mkdir source
           unzip -q "$ZIP" -d source
-          # Handle both a flat project archive and one containing a single root folder.
           if [ ! -f source/app/build.gradle ]; then
-            PROJECT_DIR="$(find source -mindepth 2 -maxdepth 3 -type f -path '*/app/build.gradle' -print -quit | xargs -r dirname | xargs -r dirname)"
+            PROJECT_DIR="$(find source -mindepth 2 -maxdepth 4 -type f -path '*/app/build.gradle' -print -quit | xargs -r dirname | xargs -r dirname)"
             test -n "$PROJECT_DIR"
-            mv "$PROJECT_DIR" source/project
-            rm -rf source/*
-            mv source/project/* source/
-            mv source/project/.[!.]* source/ 2>/dev/null || true
-            rmdir source/project 2>/dev/null || true
+            cp -a "$PROJECT_DIR"/. source/
           fi
           test -s source/app/build.gradle
           test -s source/app/src/main/java/com/mika/quickweb/MainActivity.java
@@ -51,19 +50,17 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
-
       - name: Install Android SDK packages
         run: |
           set -euo pipefail
-          SDKMANAGER="$(find "$ANDROID_HOME/cmdline-tools" -name sdkmanager -type f | head -n 1)"
-          test -n "$SDKMANAGER"
-          yes | "$SDKMANAGER" --licenses >/dev/null
-          "$SDKMANAGER" --install "platforms;android-37.2" "build-tools;37.0.0" "platform-tools"
-          if [ ! -e "$ANDROID_HOME/platforms/android-37" ]; then
-            ln -s android-37.2 "$ANDROID_HOME/platforms/android-37"
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          if [ ! -x "$SDKMANAGER" ]; then
+            SDKMANAGER="$(find "$ANDROID_HOME/cmdline-tools" -name sdkmanager -type f | sort -V | tail -n 1)"
           fi
+          test -x "$SDKMANAGER"
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
+          "$SDKMANAGER" --install "platform-tools" "platforms;android-37" "build-tools;37.0.0"
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
 
       - name: Build debug APK
         working-directory: source
@@ -85,7 +82,6 @@ jobs:
           fi
           "$ANDROID_HOME/build-tools/37.0.0/apksigner" verify --verbose "$APK"
 
-      # GitHub Release asset only. No Actions artifact upload/storage is used.
       - name: Publish debug APK as GitHub Release asset
         uses: softprops/action-gh-release@v2
         with:

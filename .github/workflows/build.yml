@@ -1,0 +1,113 @@
+name: QuickWeb Wear OS APK
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "QuickWeb-Watch-Source-QuickSwipe.zip"
+      - ".github/workflows/build.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: quickweb-apk-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Extract supplied source archive
+        run: |
+          set -euo pipefail
+          test -s QuickWeb-Watch-Source-QuickSwipe.zip
+          mkdir source
+          unzip -q QuickWeb-Watch-Source-QuickSwipe.zip -d source
+          test -s source/app/build.gradle
+          test -s source/app/src/main/java/com/mika/quickweb/MainActivity.java
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: android-actions/setup-android@v3
+      - name: Install Android SDK
+        run: |
+          yes | sdkmanager --licenses >/dev/null
+          sdkmanager "platforms;android-37" "build-tools;37.0.0" "platform-tools"
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Configure release signing
+        working-directory: source
+        env:
+          KEYSTORE_B64: ${{ secrets.QUICKWEB_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.QUICKWEB_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.QUICKWEB_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.QUICKWEB_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [ -n "${KEYSTORE_B64:-}" ] && [ -n "${KEYSTORE_PASSWORD:-}" ] && [ -n "${KEY_ALIAS:-}" ] && [ -n "${KEY_PASSWORD:-}" ]; then
+            echo "$KEYSTORE_B64" | base64 --decode > "$RUNNER_TEMP/quickweb-release.jks"
+            keytool -list -keystore "$RUNNER_TEMP/quickweb-release.jks" -storepass "$KEYSTORE_PASSWORD" -alias "$KEY_ALIAS" >/dev/null
+            {
+              echo "QUICKWEB_KEYSTORE_PATH=$RUNNER_TEMP/quickweb-release.jks"
+              echo "QUICKWEB_KEYSTORE_PASSWORD=$KEYSTORE_PASSWORD"
+              echo "QUICKWEB_KEY_ALIAS=$KEY_ALIAS"
+              echo "QUICKWEB_KEY_PASSWORD=$KEY_PASSWORD"
+            } >> "$GITHUB_ENV"
+            echo "PERSISTENT_SIGNING=true" >> "$GITHUB_ENV"
+          else
+            echo "PERSISTENT_SIGNING=false" >> "$GITHUB_ENV"
+            echo "::warning::No persistent signing secrets found; release will use the CI debug key and cannot be used for seamless future updates."
+            python3 - <<'PY'
+          from pathlib import Path
+          p = Path("app/build.gradle")
+          s = p.read_text()
+          s = s.replace("signingConfig signingConfigs.release", "signingConfig (System.getenv('PERSISTENT_SIGNING') == 'true' ? signingConfigs.release : signingConfigs.debug)")
+          p.write_text(s)
+          PY
+          fi
+      - name: Build debug and release APKs
+        working-directory: source
+        run: |
+          set -euo pipefail
+          gradle --version
+          gradle :app:assembleDebug :app:assembleRelease --no-daemon --stacktrace --console=plain
+      - name: Verify APKs
+        working-directory: source
+        run: |
+          set -euo pipefail
+          APKSIGNER="$ANDROID_HOME/build-tools/37.0.0/apksigner"
+          for APK in app/build/outputs/apk/debug/app-debug.apk app/build/outputs/apk/release/app-release.apk; do
+            test -s "$APK"
+            unzip -Z1 "$APK" | grep -q '^lib/armeabi-v7a/.*\.so$'
+            if unzip -Z1 "$APK" | grep -q '^lib/arm64-v8a/'; then
+              echo "::error::Unexpected ARM64 library in ARMv7-only APK"
+              exit 1
+            fi
+            "$APKSIGNER" verify --verbose "$APK"
+          done
+      - name: Upload APK artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: QuickWeb-WearOS-APKs
+          path: |
+            source/app/build/outputs/apk/debug/app-debug.apk
+            source/app/build/outputs/apk/release/app-release.apk
+          if-no-files-found: error
+          retention-days: 30
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: quickweb-watch-latest
+          name: QuickWeb Wear OS APK
+          prerelease: true
+          make_latest: false
+          overwrite_files: true
+          body: |
+            Automated Wear OS ARMv7 APK build.
+            Signing mode: ${{ env.PERSISTENT_SIGNING == 'true' && 'persistent release key' || 'CI debug key (not suitable for seamless updates)' }}.
+          files: |
+            source/app/build/outputs/apk/debug/app-debug.apk
+            source/app/build/outputs/apk/release/app-release.apk

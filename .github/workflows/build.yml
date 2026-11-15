@@ -4,7 +4,8 @@ on:
   push:
     branches: [main]
     paths:
-      - "QuickWeb-Watch-Source-QuickSwipe.zip"
+      - "QuickWeb-Watch.zip"
+      - ".github/workflows/build.yml"
   workflow_dispatch:
 
 permissions:
@@ -25,9 +26,20 @@ jobs:
       - name: Extract source ZIP
         run: |
           set -euo pipefail
-          test -s QuickWeb-Watch-Source-QuickSwipe.zip
+          ZIP="QuickWeb-Watch.zip"
+          test -s "$ZIP"
           mkdir source
-          unzip -q QuickWeb-Watch-Source-QuickSwipe.zip -d source
+          unzip -q "$ZIP" -d source
+          # Handle both a flat project archive and one containing a single root folder.
+          if [ ! -f source/app/build.gradle ]; then
+            PROJECT_DIR="$(find source -mindepth 2 -maxdepth 3 -type f -path '*/app/build.gradle' -print -quit | xargs -r dirname | xargs -r dirname)"
+            test -n "$PROJECT_DIR"
+            mv "$PROJECT_DIR" source/project
+            rm -rf source/*
+            mv source/project/* source/
+            mv source/project/.[!.]* source/ 2>/dev/null || true
+            rmdir source/project 2>/dev/null || true
+          fi
           test -s source/app/build.gradle
           test -s source/app/src/main/java/com/mika/quickweb/MainActivity.java
           test -s source/gradlew
@@ -73,7 +85,7 @@ jobs:
           fi
           "$ANDROID_HOME/build-tools/37.0.0/apksigner" verify --verbose "$APK"
 
-      # No upload-artifact step: publish the APK directly as a GitHub Release asset.
+      # GitHub Release asset only. No Actions artifact upload/storage is used.
       - name: Publish debug APK as GitHub Release asset
         uses: softprops/action-gh-release@v2
         with:

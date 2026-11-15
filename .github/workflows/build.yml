@@ -35,8 +35,14 @@ jobs:
       - uses: android-actions/setup-android@v3
       - name: Install Android SDK
         run: |
+          set -euo pipefail
           yes | sdkmanager --licenses >/dev/null
-          sdkmanager "platforms;android-37" "build-tools;37.0.0" "platform-tools"
+          if sdkmanager --list | grep -q 'platforms;android-37.2'; then
+            sdkmanager "platforms;android-37.2" "build-tools;37.0.0" "platform-tools"
+            [ -e "$ANDROID_HOME/platforms/android-37" ] || ln -s android-37.2 "$ANDROID_HOME/platforms/android-37"
+          else
+            sdkmanager "platforms;android-37" "build-tools;37.0.0" "platform-tools"
+          fi
       - uses: gradle/actions/setup-gradle@v4
       - name: Configure release signing
         working-directory: source
@@ -72,7 +78,6 @@ jobs:
         working-directory: source
         run: |
           set -euo pipefail
-          gradle --version
           gradle :app:assembleDebug :app:assembleRelease --no-daemon --stacktrace --console=plain
       - name: Verify APKs
         working-directory: source

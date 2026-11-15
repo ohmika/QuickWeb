@@ -5,7 +5,6 @@ on:
     branches: [main]
     paths:
       - "QuickWeb-Watch-Source-QuickSwipe.zip"
-      - ".github/workflows/build.yml"
   workflow_dispatch:
 
 permissions:
@@ -74,7 +73,7 @@ jobs:
           fi
           "$ANDROID_HOME/build-tools/37.0.0/apksigner" verify --verbose "$APK"
 
-      # No upload-artifact step: the APK is attached directly to a GitHub Release.
+      # No upload-artifact step: publish the APK directly as a GitHub Release asset.
       - name: Publish debug APK as GitHub Release asset
         uses: softprops/action-gh-release@v2
         with:
